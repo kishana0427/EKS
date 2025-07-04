@@ -2,6 +2,7 @@ Note:
 =====
 If EKS NodeGroup of EKS Cluster failed with custom canonical AMI ID of ubuntu24.04 LTS for 
 EKS 1.33 version creating using EKS console(manual steps) in User Data section, and faild with below script.
+and for Amazon VPC CNI error
 
 #!/bin/bash
 /etc/eks/bootstrap.sh akshiekscluster
