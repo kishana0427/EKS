@@ -11,6 +11,16 @@ Solution:
 ========
 Replace below script in User Data section
 
+#!/bin/bash
+/etc/eks/bootstrap.sh akshiekscluster --region ap-south-1
+
+Note: replace above User Data before that tick VPC CNI Add-Ons while instaling EKS Cluster using Console
+
+
+             OR 
+
+If VPC CNI Add-Ons not installed use below User Data script
+
 
 #!/bin/bash
 set -euxo pipefail
