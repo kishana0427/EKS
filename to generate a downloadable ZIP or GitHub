@@ -1,0 +1,11 @@
+to generate a downloadable ZIP or GitHub-ready folder structure for:
+
+    Full EKS cluster with VPC, NAT, public/private subnets
+
+    Node group autoscaling
+
+    Fargate profile
+
+    ALB ingress controller setup
+
+    Sample app + HPA + Ingress YAML?
