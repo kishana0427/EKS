@@ -1,0 +1,135 @@
+Sample app + HPA + Ingress YAM
+=============================
+Here's a complete example of a sample app, a Kubernetes Horizontal Pod Autoscaler (HPA), and an ALB Ingress – all using YAML.
+
+This is production-ready for testing the ALB Ingress Controller and HPA behavior.
+
+📁 File: k8s/sample-app.yaml
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-app
+  namespace: demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+      - name: demo-container
+        image: k8s.gcr.io/echoserver:1.10
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            cpu: 100m
+          limits:
+            cpu: 500m
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-service
+  namespace: demo
+spec:
+  selector:
+    app: demo
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+
+
+📁 File: k8s/hpa.yaml
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: demo-app-hpa
+  namespace: demo
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: demo-app
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 50
+
+
+⚠️ Requires the Kubernetes Metrics Server to be running.
+
+
+📁 File: k8s/ingress.yaml
+
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: demo-ingress
+  namespace: demo
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+spec:
+  rules:
+  - http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: demo-service
+            port:
+              number: 80
+
+
+🚀 Apply Everything
+
+kubectl apply -f k8s/sample-app.yaml
+kubectl apply -f k8s/hpa.yaml
+kubectl apply -f k8s/ingress.yaml
+
+Then check:
+
+kubectl get ingress -n demo
+
+
+You’ll get an ALB DNS name like demo-ingress-123456789.us-east-1.elb.amazonaws.com.
+
+🔄 Load Test HPA (Optional)
+
+Use kubectl run or hey or ab to generate CPU load:
+
+kubectl run -n demo load-generator --image=busybox -- /bin/sh -c "while true; do wget -q -O- http://demo-service.demo.svc.cluster.local; done"
+
+
+✅ Summary
+Resource	Purpose
+Deployment	Simple Echo server container
+Service	Exposes app to internal traffic
+Ingress	Public ALB load balancer
+HPA	Auto-scales pods based on CPU usage
+
