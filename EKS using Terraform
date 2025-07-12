@@ -1,0 +1,420 @@
+Setting up Amazon EKS (Elastic Kubernetes Service) with a VPC, subnets (public/private), and NAT 
+Gateway using Terraform involves multiple components. Here's a high-level breakdown of what we’ll define:
+
+🛠️ Components to Create:
+
+    VPC
+
+    Public & Private Subnets
+
+    Internet Gateway (for public subnets)
+
+    NAT Gateway (for private subnets to access the internet)
+
+    Route Tables
+
+    EKS Cluster & Node Group
+
+    IAM Roles (for EKS)
+
+    Security Groups
+
+✅ Prerequisites
+
+    Terraform >= 1.0
+
+    AWS CLI configured
+
+    IAM user/role with permissions to create VPC, EKS, etc.
+
+📂 Project Structure (suggested)
+
+eks-vpc-terraform/
+├── main.tf
+├── variables.tf
+├── outputs.tf
+└── provider.tf
+
+🧾 provider.tf
+
+provider "aws" {
+  region = var.region
+}
+
+🧾 variables.tf
+
+variable "region" {
+  default = "us-west-2"
+}
+
+variable "vpc_cidr" {
+  default = "10.0.0.0/16"
+}
+
+variable "public_subnets" {
+  default = ["10.0.1.0/24", "10.0.2.0/24"]
+}
+
+variable "private_subnets" {
+  default = ["10.0.3.0/24", "10.0.4.0/24"]
+}
+
+
+🧾 main.tf (Core Setup)
+
+1. VPC and Subnets
+
+resource "aws_vpc" "eks_vpc" {
+  cidr_block = var.vpc_cidr
+  enable_dns_support = true
+  enable_dns_hostnames = true
+}
+
+resource "aws_internet_gateway" "igw" {
+  vpc_id = aws_vpc.eks_vpc.id
+}
+
+resource "aws_subnet" "public" {
+  count             = length(var.public_subnets)
+  vpc_id            = aws_vpc.eks_vpc.id
+  cidr_block        = var.public_subnets[count.index]
+  availability_zone = data.aws_availability_zones.available.names[count.index]
+  map_public_ip_on_launch = true
+}
+
+resource "aws_subnet" "private" {
+  count             = length(var.private_subnets)
+  vpc_id            = aws_vpc.eks_vpc.id
+  cidr_block        = var.private_subnets[count.index]
+  availability_zone = data.aws_availability_zones.available.names[count.index]
+}
+
+2. NAT Gateway
+
+resource "aws_eip" "nat" {
+  vpc = true
+}
+
+resource "aws_nat_gateway" "nat" {
+  allocation_id = aws_eip.nat.id
+  subnet_id     = aws_subnet.public[0].id
+}
+
+3. Route Tables
+
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.eks_vpc.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.igw.id
+  }
+}
+
+resource "aws_route_table_association" "public" {
+  count          = length(var.public_subnets)
+  subnet_id      = aws_subnet.public[count.index].id
+  route_table_id = aws_route_table.public.id
+}
+
+resource "aws_route_table" "private" {
+  vpc_id = aws_vpc.eks_vpc.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.nat.id
+  }
+}
+
+resource "aws_route_table_association" "private" {
+  count          = length(var.private_subnets)
+  subnet_id      = aws_subnet.private[count.index].id
+  route_table_id = aws_route_table.private.id
+}
+
+4. EKS Cluster (Optional: using module)
+
+Use the official EKS Terraform module:
+
+module "eks" {
+  source          = "terraform-aws-modules/eks/aws"
+  cluster_name    = "my-eks-cluster"
+  cluster_version = "1.29"
+  subnets         = aws_subnet.private[*].id
+  vpc_id          = aws_vpc.eks_vpc.id
+
+  node_groups = {
+    eks_nodes = {
+      desired_capacity = 2
+      max_capacity     = 3
+      min_capacity     = 1
+
+      instance_types = ["t3.medium"]
+      subnets        = aws_subnet.private[*].id
+    }
+  }
+
+  tags = {
+    environment = "dev"
+    terraform   = "true"
+  }
+}
+
+
+🧾 outputs.tf
+
+output "vpc_id" {
+  value = aws_vpc.eks_vpc.id
+}
+
+output "public_subnet_ids" {
+  value = aws_subnet.public[*].id
+}
+
+output "private_subnet_ids" {
+  value = aws_subnet.private[*].id
+}
+
+output "eks_cluster_name" {
+  value = module.eks.cluster_name
+}
+
+
+🟢 Deploying
+
+terraform init
+terraform apply
+
+💡 Notes
+
+    Use aws_availability_zones data source for availability zones.
+
+    Make sure your IAM permissions allow creating all resources.
+
+    For production, create NAT Gateways per AZ for HA.
+
+
+
+ If want to add things like autoscaling, Fargate, or ALB ingress:
+ ================================================================
+ ================================================================
+ ================================================================
+
+ Here’s how to extend your Terraform setup to include Auto Scaling (Cluster + Pod), Fargate, 
+ and AWS Load Balancer Controller (ALB ingress) in your EKS cluster:
+
+ 🎯 1. Cluster Autoscaler (EC2 NodeGroups)
+
+Leverage AWS's built-in autoscaling using the cluster-autoscaler Helm chart and IRSA:
+
+# IAM policy for cluster-autoscaler
+resource "aws_iam_policy" "cluster_autoscaler" {
+  name = "ClusterAutoscalerPolicy"
+  policy = <<EOF
+{
+  "Version":"2012-10-17",
+  "Statement":[
+    {
+      "Effect":"Allow",
+      "Action":[
+        "autoscaling:DescribeAutoScalingGroups",
+        "autoscaling:SetDesiredCapacity",
+        "autoscaling:TerminateInstanceInAutoScalingGroup",
+        "ec2:DescribeLaunchTemplateVersions",
+        "eks:DescribeNodegroup"
+      ],
+      "Resource":"*"
+    }
+  ]
+}
+EOF
+}
+
+# IAM Role for IRSA
+resource "aws_iam_role" "cluster_autoscaler" {
+  name = "EKS-ClusterAutoscaler-Role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Federated = var.eks_iam_oidc_provider_arn }
+      Action    = "sts:AssumeRoleWithWebIdentity"
+      Condition = {
+        StringEquals = {
+          "${replace(var.eks_iam_oidc_provider_url,"https://","")}:sub" = "system:serviceaccount:kube-system:cluster-autoscaler"
+        }
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "ca_attach" {
+  policy_arn = aws_iam_policy.cluster_autoscaler.arn
+  role       = aws_iam_role.cluster_autoscaler.name
+}
+
+# Helm chart for cluster-autoscaler
+resource "helm_release" "cluster_autoscaler" {
+  name       = "cluster-autoscaler"
+  repository = "https://kubernetes.github.io/autoscaler"
+  chart      = "cluster-autoscaler"
+  version    = "v9.35.0"
+  namespace  = "kube-system"
+
+  set {
+    name  = "autoDiscovery.clusterName"
+    value = module.eks.cluster_id
+  }
+  set {
+    name  = "awsRegion"
+    value = var.region
+  }
+  set {
+    name  = "rbac.create"
+    value = "true"
+  }
+  set {
+    name  = "serviceAccount.create"
+    value = "false"
+  }
+  set {
+    name  = "serviceAccount.name"
+    value = "cluster-autoscaler"
+  }
+  set {
+    name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+    value = aws_iam_role.cluster_autoscaler.arn
+  }
+}
+
+This follows a solid example recommended by the community
+
+
+
+⚙️ 2. Fargate Profile
+
+To run specific workloads on Fargate:
+
+module "eks" {
+  source          = "terraform-aws-modules/eks/aws"
+  # existing config …
+  create_fargate_profile                 = true
+  fargate_profiles = {
+    system = {
+      selectors = [{ namespace = "default" }, { namespace = "kube-system" }]
+    }
+  }
+  # Ensure IRSA is enabled:
+  use_irsa = true
+}
+
+This config ensures that system and default namespaces run on Fargate
+Reddit+3
+
+🧭 3. AWS Load Balancer Controller (ALB Ingress)
+
+Best practice is to deploy via Helm and IRSA:
+
+data "aws_iam_policy_document" "alb_assume" {
+  statement {
+    effect = "Allow"
+    principals {
+      type        = "Service"
+      identifiers = ["eks.amazonaws.com"]
+    }
+    actions = ["sts:AssumeRole"]
+    condition {
+      test     = "ForAnyValue:StringEquals"
+      variable = "sts:ExternalId"
+      values   = [module.eks.cluster_oidc_arn]
+    }
+  }
+}
+
+resource "aws_iam_role" "alb_iam_role" {
+  name               = "alb-ingress-controller-role"
+  assume_role_policy = data.aws_iam_policy_document.alb_assume.json
+}
+
+resource "aws_iam_policy_attachment" "alb_attach" {
+  policy_arn = "arn:aws:iam::aws:policy/AWSLoadBalancerControllerIAMPolicy"
+  role       = aws_iam_role.alb_iam_role.name
+}
+
+resource "helm_release" "aws_lb_controller" {
+  name       = "aws-load-balancer-controller"
+  repository = "https://aws.github.io/eks-charts"
+  chart      = "aws-load-balancer-controller"
+  version    = "1.6.8"
+  namespace  = "kube-system"
+  set {
+    name  = "clusterName"
+    value = module.eks.cluster_id
+  }
+  set {
+    name  = "serviceAccount.create"
+    value = "false"
+  }
+  set {
+    name  = "serviceAccount.name"
+    value = "aws-load-balancer-controller"
+  }
+  set {
+    name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+    value = aws_iam_role.alb_iam_role.arn
+  }
+}
+
+
+Inside your Kubernetes manifests, annotate your Ingress like:
+
+metadata:
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip  # needed for Fargate :contentReference[oaicite:8]{index=8}
+
+
+    🚀 4. Horizontal Pod Autoscaler (HPA)
+
+Add a Terraform manifest to autoscale your pods:
+
+resource "kubernetes_horizontal_pod_autoscaler_v2" "my_app" {
+  metadata {
+    name      = "my-app-hpa"
+    namespace = "default"
+  }
+  spec {
+    scale_target_ref {
+      api_version = "apps/v1"
+      kind        = "Deployment"
+      name        = kubernetes_deployment.my_app.metadata[0].name
+    }
+    min_replicas = 2
+    max_replicas = 10
+
+    metric {
+      type = "Resource"
+      resource {
+        name                     = "cpu"
+        target {
+          type               = "Utilization"
+          average_utilization = 60
+        }
+      }
+    }
+  }
+}
+
+
+This ensures your application scales with CPU demand.
+
+✅ Summary
+Feature	Terraform Block	Managed By
+EC2 Node Group Autoscaling	helm_release.cluster_autoscaler + IAM role	AWS AutoScaling
+Running in Fargate	create_fargate_profile	AWS/EKS
+HTTP(S) Ingress via ALB	helm_release.aws_lb_controller + annotations	AWS LB Controller
+Pod-level Auto Scaling (HPA)	kubernetes_horizontal_pod_autoscaler	K8s/HPA
+
+
+
