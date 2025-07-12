@@ -1,0 +1,242 @@
+Fargate profile
+===============
+===============
+
+Adding a Fargate profile to your EKS cluster allows you to run specific Kubernetes pods on AWS Fargate 
+instead of EC2 nodes—this is useful for lightweight workloads, serverless architecture, or cost-efficient jobs.
+
+✅ What You’ll Add
+
+    An EKS Fargate profile that maps Kubernetes namespace and optional label selectors to Fargate
+
+    IAM Role that EKS uses to launch Fargate pods
+
+    Updated Terraform to provision it
+
+🧱 Example: Add Fargate Profile to main.tf
+
+resource "aws_iam_role" "fargate_pod_execution_role" {
+  name = "${var.cluster_name}-fargate-pod-execution-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect = "Allow",
+      Principal = {
+        Service = "eks-fargate-pods.amazonaws.com"
+      },
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "fargate_execution" {
+  role       = aws_iam_role.fargate_pod_execution_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSFargatePodExecutionRolePolicy"
+}
+
+resource "aws_eks_fargate_profile" "default" {
+  cluster_name           = aws_eks_cluster.main.name
+  fargate_profile_name   = "${var.cluster_name}-fargate-profile"
+  pod_execution_role_arn = aws_iam_role.fargate_pod_execution_role.arn
+  subnet_ids             = aws_subnet.private[*].id
+
+  selector {
+    namespace = "fargate-apps"
+  }
+
+  depends_on = [aws_eks_node_group.node_group]  # Optional: wait for node group
+
+}
+
+📁 Add to variables.tf
+
+
+variable "enable_fargate" {
+  description = "Enable EKS Fargate Profile"
+  type        = bool
+  default     = true
+}
+
+
+Wrap the Fargate resources with conditionals if needed:
+
+count = var.enable_fargate ? 1 : 0
+
+🧪 Create Namespace for Fargate Pods (Post-deploy)
+
+kubectl create namespace fargate-apps
+
+
+Any pods deployed to this namespace will automatically be scheduled on Fargate.
+
+✅ Summary
+Resource	Purpose
+aws_iam_role	IAM role EKS uses to run Fargate pods
+aws_eks_fargate_profile	Tells EKS which namespace/labels to run on Fargate
+Private subnets	Fargate requires private subnets (already set)
+Namespace fargate-apps	Pods in this namespace use Fargate
+
+
+
+
+to support multiple Fargate profiles or configure this as a reusable module in your repo
+========================================================================================
+========================================================================================
+
+Let's turn Fargate profiles into a reusable Terraform module that supports:
+
+    🔁 Multiple Fargate profiles
+
+    📦 Custom namespaces
+
+    🎯 Optional label selectors
+
+    🛡️ Secure IAM execution roles
+
+    📁 Directory Structure Update
+
+We'll modularize Fargate support like this:
+
+eks-cluster-terraform/
+└── terraform/
+    ├── modules/
+    │   └── fargate-profile/
+    │       ├── main.tf
+    │       ├── variables.tf
+    │       ├── outputs.tf
+    └── main.tf   # Call module from here
+
+
+📦 modules/fargate-profile/main.tf
+
+resource "aws_iam_role" "fargate_execution" {
+  name = "${var.cluster_name}-${var.name}-execution-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Principal = {
+          Service = "eks-fargate-pods.amazonaws.com"
+        },
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "fargate_execution" {
+  role       = aws_iam_role.fargate_execution.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSFargatePodExecutionRolePolicy"
+}
+
+resource "aws_eks_fargate_profile" "this" {
+  cluster_name           = var.cluster_name
+  fargate_profile_name   = var.name
+  pod_execution_role_arn = aws_iam_role.fargate_execution.arn
+  subnet_ids             = var.subnet_ids
+
+  dynamic "selector" {
+    for_each = var.selectors
+    content {
+      namespace = selector.value.namespace
+      labels    = lookup(selector.value, "labels", null)
+    }
+  }
+}
+
+
+📥 variables.tf
+
+variable "name" {
+  description = "Fargate profile name"
+  type        = string
+}
+
+variable "cluster_name" {
+  description = "EKS Cluster name"
+  type        = string
+}
+
+variable "subnet_ids" {
+  description = "Subnets to launch Fargate pods in"
+  type        = list(string)
+}
+
+variable "selectors" {
+  description = "List of namespace/label selectors"
+  type = list(object({
+    namespace = string
+    labels    = optional(map(string))
+  }))
+}
+
+
+📤 outputs.tf
+
+
+output "fargate_profile_name" {
+  value = aws_eks_fargate_profile.this.fargate_profile_name
+}
+
+
+🧩 Use the Module in Root main.tf
+
+
+
+module "fargate_profiles" {
+  source       = "./modules/fargate-profile"
+  name         = "fargate-profile"
+  cluster_name = aws_eks_cluster.main.name
+  subnet_ids   = aws_subnet.private[*].id
+
+  selectors = [
+    {
+      namespace = "fargate-apps"
+      labels    = {
+        run = "on-fargate"
+      }
+    },
+    {
+      namespace = "metrics"
+    }
+  ]
+}
+
+
+🧪 Example Deployment
+
+
+1. Create Namespaces:
+
+kubectl create namespace fargate-apps
+kubectl create namespace metrics
+
+2. Deploy Pods with matching labels:
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fargate-pod
+  namespace: fargate-apps
+  labels:
+    run: on-fargate
+spec:
+  containers:
+  - name: pause
+    image: k8s.gcr.io/pause
+
+    
+✅ Summary
+Feature	Value
+Modular Fargate Profile	Can add multiple profiles easily
+Namespace-based control	Fine-grained Fargate scheduling
+Optional label selectors	Even more specific pod targeting
+Uses IRSA securely	Minimal IAM trust + permissions
+
+
+
+
+
