@@ -1,0 +1,263 @@
+Node group autoscaling
+======================
+======================
+
+To enable autoscaling for EKS node groups, you need two layers of configuration:
+
+✅ 1. EKS Managed Node Group Autoscaling (Terraform)
+
+In your existing Terraform config (in main.tf), you're already defining scaling_config. 
+Here's how to ensure it's correctly configured:
+
+🔧 Example
+
+resource "aws_eks_node_group" "node_group" {
+  cluster_name    = aws_eks_cluster.main.name
+  node_group_name = "${var.cluster_name}-ng"
+  node_role_arn   = aws_iam_role.node_group_role.arn
+  subnet_ids      = aws_subnet.private[*].id
+
+  scaling_config {
+    desired_size = 2
+    max_size     = 5
+    min_size     = 1
+  }
+
+  instance_types = ["t3.medium"]
+  capacity_type  = "ON_DEMAND"  # or "SPOT"
+}
+
+✅ 2. Cluster Autoscaler (Kubernetes Level)
+
+EKS doesn’t autoscale nodes by itself. To react to pod demand, you need to install the Cluster Autoscaler in your cluster.
+
+🔧 Step-by-Step: Install Cluster Autoscaler (Helm Recommended)
+
+helm repo add autoscaler https://kubernetes.github.io/autoscaler
+helm repo update
+
+helm upgrade --install cluster-autoscaler autoscaler/cluster-autoscaler \
+  --namespace kube-system \
+  --set cloudProvider=aws \
+  --set autoDiscovery.clusterName=my-eks-cluster \
+  --set awsRegion=us-east-1 \
+  --set rbac.create=true \
+  --set extraArgs.balance-similar-node-groups=true \
+  --set extraArgs.expander=least-waste \
+  --set extraArgs.skip-nodes-with-local-storage=false \
+  --set extraArgs.skip-nodes-with-system-pods=false
+
+Or use a YAML manifest if you don’t want Helm.
+
+📌 IAM for Cluster Autoscaler (IRSA Recommended)
+
+Recommended: use IAM Roles for Service Accounts (IRSA) for autoscaler pods.
+
+If not using IRSA, attach this policy to your node group role:
+
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Action": [
+        "autoscaling:DescribeAutoScalingGroups",
+        "autoscaling:DescribeAutoScalingInstances",
+        "autoscaling:DescribeLaunchConfigurations",
+        "autoscaling:DescribeTags",
+        "autoscaling:SetDesiredCapacity",
+        "autoscaling:TerminateInstanceInAutoScalingGroup"
+      ],
+      "Effect": "Allow",
+      "Resource": "*"
+    }
+  ]
+}
+
+✅ Summary
+Component	What It Does
+scaling_config	Sets min/max/desired capacity in Terraform
+Cluster Autoscaler	Adds/removes nodes dynamically at runtime
+IAM permissions	Grants Cluster Autoscaler access to manage ASGs
+Optional: IRSA	Secure service account access to AWS APIs
+
+To include the Cluster Autoscaler installation (Helm or YAML) and IAM policy attachment into your Terraform repo setup
+======================================================================================================================
+
+Below is the complete integration of Cluster Autoscaler into your Terraform EKS setup using:
+
+    ✅ IAM Role for Service Account (IRSA)
+
+    ✅ Helm-based deployment of Cluster Autoscaler
+
+    ✅ Terraform-managed IAM policy
+
+    ✅ Optional: Terraform Helm provider for autoscaler install
+
+📁 Additions to GitHub Repo Structure
+
+Add this to your repo under a new folder:
+
+eks-cluster-terraform/
+└── terraform/
+    ├── cluster-autoscaler/
+    │   ├── iam-policy.json
+
+🔐 cluster-autoscaler/iam-policy.json
+
+
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Action": [
+        "autoscaling:DescribeAutoScalingGroups",
+        "autoscaling:DescribeAutoScalingInstances",
+        "autoscaling:DescribeLaunchConfigurations",
+        "autoscaling:DescribeTags",
+        "autoscaling:SetDesiredCapacity",
+        "autoscaling:TerminateInstanceInAutoScalingGroup"
+      ],
+      "Effect": "Allow",
+      "Resource": "*"
+    }
+  ]
+}
+
+
+✍️ Add to main.tf (IRSA + Helm)
+
+1. IAM Policy & Role for Autoscaler
+
+resource "aws_iam_policy" "cluster_autoscaler" {
+  name        = "EKSClusterAutoscalerPolicy"
+  policy      = file("${path.module}/cluster-autoscaler/iam-policy.json")
+}
+
+resource "aws_iam_role" "cluster_autoscaler" {
+  name = "${var.cluster_name}-autoscaler-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Federated = aws_iam_openid_connect_provider.eks.arn
+        }
+        Action = "sts:AssumeRoleWithWebIdentity"
+        Condition = {
+          StringEquals = {
+            "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:sub" = "system:serviceaccount:kube-system:cluster-autoscaler"
+          }
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "cluster_autoscaler_attach" {
+  role       = aws_iam_role.cluster_autoscaler.name
+  policy_arn = aws_iam_policy.cluster_autoscaler.arn
+}
+
+2. OIDC Provider for IRSA
+
+data "aws_eks_cluster" "cluster" {
+  name = aws_eks_cluster.main.name
+}
+
+data "aws_eks_cluster_auth" "cluster" {
+  name = aws_eks_cluster.main.name
+}
+
+resource "aws_iam_openid_connect_provider" "eks" {
+  url             = data.aws_eks_cluster.cluster.identity[0].oidc[0].issuer
+  client_id_list  = ["sts.amazonaws.com"]
+  thumbprint_list = [data.tls_certificate.oidc.certificates[0].sha1_fingerprint]
+}
+
+data "tls_certificate" "oidc" {
+  url = data.aws_eks_cluster.cluster.identity[0].oidc[0].issuer
+}
+
+
+📦 Optional: Install Cluster Autoscaler via Terraform Helm Provider
+
+Add Helm provider block in provider.tf:
+
+provider "helm" {
+  kubernetes {
+    host                   = data.aws_eks_cluster.cluster.endpoint
+    cluster_ca_certificate = base64decode(data.aws_eks_cluster.cluster.certificate_authority[0].data)
+    token                  = data.aws_eks_cluster_auth.cluster.token
+  }
+}
+
+
+Then add the Helm release:
+
+resource "helm_release" "cluster_autoscaler" {
+  name       = "cluster-autoscaler"
+  repository = "https://kubernetes.github.io/autoscaler"
+  chart      = "cluster-autoscaler"
+  namespace  = "kube-system"
+  version    = "9.29.0"
+
+  set {
+    name  = "autoDiscovery.clusterName"
+    value = var.cluster_name
+  }
+
+  set {
+    name  = "awsRegion"
+    value = var.region
+  }
+
+  set {
+    name  = "rbac.serviceAccount.create"
+    value = "true"
+  }
+
+  set {
+    name  = "rbac.serviceAccount.name"
+    value = "cluster-autoscaler"
+  }
+
+  set {
+    name  = "extraArgs.balance-similar-node-groups"
+    value = "true"
+  }
+
+  set {
+    name  = "extraArgs.expander"
+    value = "least-waste"
+  }
+
+  set {
+    name  = "extraArgs.skip-nodes-with-local-storage"
+    value = "false"
+  }
+
+  set {
+    name  = "extraArgs.skip-nodes-with-system-pods"
+    value = "false"
+  }
+
+  set {
+    name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+    value = aws_iam_role.cluster_autoscaler.arn
+  }
+
+  depends_on = [aws_iam_role_policy_attachment.cluster_autoscaler_attach]
+}
+
+✅ What You Get
+Feature	Value
+EKS Node Group Autoscaling	Scales nodes between min/max automatically
+Cluster Autoscaler	Reacts to pod demand to increase/decrease node count
+IAM for Autoscaler	Uses secure IRSA role with minimal permissions
+Helm Deployed	Automatically installs via Terraform + Helm provider
+
+
+
+
