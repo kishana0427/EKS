@@ -711,6 +711,9 @@ terraform apply
 
 
 
+
+Note:
+
 <img width="1366" height="768" alt="Screenshot (7)" src="https://github.com/user-attachments/assets/ca5984b0-d6cc-4dd7-9e52-d0eee793fe1e" />
 
 
