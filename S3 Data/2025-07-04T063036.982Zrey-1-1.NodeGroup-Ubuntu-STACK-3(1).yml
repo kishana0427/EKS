@@ -1,0 +1,94 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: EKS Ubuntu NodeGroup via Launch Template
+
+Parameters:
+  ClusterName:
+    Type: String
+    Default: MyCluster
+
+  UbuntuAMI:
+    Type: String
+    Description: Ubuntu EKS Optimized AMI ID
+    Default: ami-086980564781307a2  # Replace with latest Canonical Ubuntu AMI ID for your region
+
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of an existing EC2 KeyPair to SSH into Ubuntu instances
+    Default: mrcet-key
+
+Resources:
+
+  # IAM role for EKS nodes
+  EKSNodeInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-NodeInstanceRole
+          
+  # Launch Template for Ubuntu AMI
+  UbuntuLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub ${ClusterName}-UbuntuLT
+      LaunchTemplateData:
+        ImageId: !Ref UbuntuAMI
+        InstanceType: t3.medium
+        KeyName: !Ref KeyName
+        SecurityGroupIds:
+          - !ImportValue MySG
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            /etc/eks/bootstrap.sh ${ClusterName}
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub ${ClusterName}-UbuntuNode
+              - Key: kubernetes.io/cluster/${ClusterName}
+                Value: owned
+
+  # Instance profile for NodeGroup
+  NodeInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EKSNodeInstanceRole
+
+  # Node Group using the Launch Template
+  UbuntuNodeGroup:
+    Type: AWS::EKS::Nodegroup
+    Properties:
+      ClusterName: !ImportValue EKSClusterName
+      NodeRole: !GetAtt EKSNodeInstanceRole.Arn
+      Subnets: !Split [",", !ImportValue MyPublicSubnetIDs]
+      ScalingConfig:
+        MinSize: 2
+        MaxSize: 2
+        DesiredSize: 2      
+      LaunchTemplate:
+        Id: !Ref UbuntuLaunchTemplate
+        Version: !GetAtt UbuntuLaunchTemplate.LatestVersionNumber
+
+      NodegroupName: !Sub ${ClusterName}-UbuntuNodeGroup
+      Tags:
+        Name: !Sub ${ClusterName}-UbuntuNodeGroup
+        kubernetes.io/cluster/MyCluster: owned
+
+Outputs:
+  UbuntuNodeGroup:
+    Value: !Ref UbuntuNodeGroup
+    Export:
+      Name: UbuntuNodeGroupName
