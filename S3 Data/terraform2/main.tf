@@ -1,5 +1,5 @@
 provider "aws" {
-  region = "ap-south-2"
+  region = "ap-south-1"
 }
 
 # VPC
@@ -106,15 +106,20 @@ resource "aws_iam_role" "eks_cluster_role" {
 }
 
 resource "aws_iam_role_policy_attachment" "eks_cluster_attach" {
+  count = 3
   role       = aws_iam_role.eks_cluster_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+  policy_arn = element([
+    "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy",
+	"arn:aws:iam::aws:policy/AmazonEKSServicePolicy"
+	], count.index)
 }
+
 
 # EKS Cluster
 resource "aws_eks_cluster" "eks_cluster" {
   name     = "my-eks-cluster"
   role_arn = aws_iam_role.eks_cluster_role.arn
-  version  = "1.29"
+  version  = "1.33"
 
   vpc_config {
     subnet_ids = aws_subnet.private[*].id
@@ -149,22 +154,22 @@ resource "aws_iam_role_policy_attachment" "eks_worker_node_policies" {
 }
 
 # EKS Managed Node Group
-#resource "aws_eks_node_group" "node_group" {
-#  cluster_name    = aws_eks_cluster.eks_cluster.name
-#  node_group_name = "my-node-group"
-#  node_role_arn   = aws_iam_role.eks_node_role.arn
-#  subnet_ids      = aws_subnet.private[*].id
+resource "aws_eks_node_group" "node_group" {
+  cluster_name    = aws_eks_cluster.eks_cluster.name
+  node_group_name = "my-node-group"
+  node_role_arn   = aws_iam_role.eks_node_role.arn
+  subnet_ids      = aws_subnet.private[*].id
 
-#  scaling_config {
-#    desired_size = 2
-#    max_size     = 3
-#    min_size     = 1
-#  }
+  scaling_config {
+    desired_size = 2
+    max_size     = 3
+    min_size     = 1
+  }
 
-#  instance_types = ["t3.medium"]
+  instance_types = ["t3.micro"]
 #  capacity_type  = "SPOT"        # Use Spot Instances to potentially bypass fleet request limits
-#  ami_type       = "AL2023_x86_64"
+  ami_type       = "AL2023_x86_64_STANDARD"
 
-#  depends_on = [aws_iam_role_policy_attachment.eks_worker_node_policies]
-#}
+  depends_on = [aws_iam_role_policy_attachment.eks_worker_node_policies]
+}
 
