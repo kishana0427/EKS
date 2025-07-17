@@ -23,7 +23,7 @@ resource "aws_subnet" "public" {
   vpc_id            = aws_vpc.eks_vpc.id
   cidr_block        = cidrsubnet(aws_vpc.eks_vpc.cidr_block, 8, count.index)
   map_public_ip_on_launch = true
-  availability_zone = element(["ap-south-2a", "ap-south-2b"], count.index)
+  availability_zone = element(["ap-south-1a", "ap-south-1b"], count.index)
 
   tags = {
     Name = "eks-public-${count.index}"
@@ -36,7 +36,7 @@ resource "aws_subnet" "private" {
   vpc_id            = aws_vpc.eks_vpc.id
   cidr_block        = cidrsubnet(aws_vpc.eks_vpc.cidr_block, 8, count.index + 2)
   map_public_ip_on_launch = false
-  availability_zone = element(["ap-south-2a", "ap-south-2b"], count.index)
+  availability_zone = element(["ap-south-1a", "ap-south-1b"], count.index)
 
   tags = {
     Name = "eks-private-${count.index}"
