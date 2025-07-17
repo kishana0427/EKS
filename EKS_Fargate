@@ -1,0 +1,761 @@
+Here's a simple example of Terraform code to create an Amazon EKS Cluster with Fargate profiles. This setup includes:
+
+    VPC using the official AWS VPC module
+
+    EKS Cluster using the aws_eks_cluster resource
+
+    Fargate Profile for EKS to run workloads without managing EC2 worker nodes
+
+
+✅ Prerequisites
+
+    Terraform >= 1.3
+
+    AWS CLI configured
+
+    An IAM role or user with necessary permissions
+
+📁 Project Structure
+
+eks-fargate/
+├── main.tf
+├── variables.tf
+├── outputs.tf
+
+
+main.tf
+
+
+provider "aws" {
+  region = var.region
+}
+
+module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "5.1.0"
+
+  name = "eks-vpc"
+  cidr = "10.0.0.0/16"
+
+  azs             = slice(data.aws_availability_zones.available.names, 0, 2)
+  public_subnets  = ["10.0.1.0/24", "10.0.2.0/24"]
+  private_subnets = ["10.0.3.0/24", "10.0.4.0/24"]
+
+  enable_dns_hostnames = true
+  enable_dns_support   = true
+
+  tags = {
+    Name = "eks-vpc"
+  }
+}
+
+data "aws_availability_zones" "available" {}
+
+resource "aws_iam_role" "eks_role" {
+  name = "eks-cluster-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Action = "sts:AssumeRole",
+        Principal = {
+          Service = "eks.amazonaws.com"
+        },
+        Effect = "Allow",
+      },
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "eks_policy_attachment" {
+  role       = aws_iam_role.eks_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+}
+
+resource "aws_eks_cluster" "eks" {
+  name     = "fargate-eks-cluster"
+  role_arn = aws_iam_role.eks_role.arn
+
+  vpc_config {
+    subnet_ids = module.vpc.private_subnets
+  }
+
+  depends_on = [aws_iam_role_policy_attachment.eks_policy_attachment]
+}
+
+resource "aws_iam_role" "fargate_pod_execution_role" {
+  name = "fargate-pod-execution-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Action = "sts:AssumeRole",
+        Principal = {
+          Service = "eks-fargate-pods.amazonaws.com"
+        },
+        Effect = "Allow",
+      },
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "fargate_execution_role_policy" {
+  role       = aws_iam_role.fargate_pod_execution_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSFargatePodExecutionRolePolicy"
+}
+
+resource "aws_eks_fargate_profile" "fp" {
+  cluster_name           = aws_eks_cluster.eks.name
+  fargate_profile_name   = "default-fargate"
+  pod_execution_role_arn = aws_iam_role.fargate_pod_execution_role.arn
+  subnet_ids             = module.vpc.private_subnets
+
+  selector {
+    namespace = "default"
+  }
+
+  depends_on = [
+    aws_eks_cluster.eks,
+    aws_iam_role_policy_attachment.fargate_execution_role_policy
+  ]
+}
+
+
+variables.tf
+
+
+variable "region" {
+  description = "AWS region"
+  type        = string
+  default     = "us-west-2"
+}
+
+
+outputs.tf
+
+🔧 How to Deploy
+
+Initialize Terraform:
+
+terraform init
+
+
+Preview the changes:
+
+terraform plan
+
+
+Apply the configuration:
+
+terraform apply
+
+
+✅ Optional Next Steps
+
+    Add EKS Add-ons (CoreDNS, kube-proxy, etc.)
+
+    Use aws-auth ConfigMap to allow IAM users/roles
+
+    Deploy workloads using kubectl
+
+
+To integrate this with ECR, ALB Ingress, or CI/CD pipelines.
+==========================================================
+
+ extend your EKS Fargate setup to include the following:
+
+
+🔄 Integration Plan
+
+    ECR – For storing container images.
+
+    ALB Ingress Controller – For routing external traffic to Kubernetes services.
+
+    CI/CD pipeline (GitHub Actions) – Optional setup to automate deploys.
+
+
+🧱 1. ECR Repository
+
+Add this to your main.tf to create an ECR repo for your app:
+
+resource "aws_ecr_repository" "app_repo" {
+  name                 = "my-fargate-app"
+  image_tag_mutability = "MUTABLE"
+  force_delete         = true
+}
+
+
+To push images to ECR:
+
+aws ecr get-login-password --region us-west-2 | \
+  docker login --username AWS --password-stdin <aws_account_id>.dkr.ecr.us-west-2.amazonaws.com
+
+docker build -t my-fargate-app .
+docker tag my-fargate-app:latest <aws_account_id>.dkr.ecr.us-west-2.amazonaws.com/my-fargate-app:latest
+docker push <aws_account_id>.dkr.ecr.us-west-2.amazonaws.com/my-fargate-app:latest
+
+
+🌐 2. ALB Ingress Controller for Fargate
+Prerequisites
+
+    ALB Controller IAM Policy
+    Download from AWS:
+
+
+curl -o iam-policy.json https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/main/docs/install/iam_policy.json
+
+
+    Create IAM Role for Service Account (IRSA)
+    Use Terraform, or eksctl (easier for IRSA setup). Do you want Terraform only?
+
+    Let me know if you'd like full Terraform code for the ALB controller role and Helm install.
+
+
+
+🚀 3. CI/CD with GitHub Actions
+.github/workflows/deploy.yml
+
+
+name: Deploy to EKS
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Configure AWS
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-west-2
+
+    - name: Login to ECR
+      uses: aws-actions/amazon-ecr-login@v1
+
+    - name: Build, Tag, and Push Docker image
+      run: |
+        docker build -t my-fargate-app .
+        docker tag my-fargate-app:latest <aws_account_id>.dkr.ecr.us-west-2.amazonaws.com/my-fargate-app:latest
+        docker push <aws_account_id>.dkr.ecr.us-west-2.amazonaws.com/my-fargate-app:latest
+
+    - name: Update Kubernetes Deployment
+      run: |
+        aws eks update-kubeconfig --name fargate-eks-cluster
+        kubectl set image deployment/my-app my-app=<aws_account_id>.dkr.ecr.us-west-2.amazonaws.com/my-fargate-app:latest
+
+
+
+📦 Optional: Sample Kubernetes App
+
+Here’s a simple deployment YAML for a Fargate-compatible workload:
+
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+  labels:
+    app: my-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: my-app
+  template:
+    metadata:
+      labels:
+        app: my-app
+    spec:
+      containers:
+      - name: my-app
+        image: <your_ecr_repo>
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-app-service
+spec:
+  type: ClusterIP
+  selector:
+    app: my-app
+  ports:
+  - port: 80
+    targetPort: 80
+
+
+Make sure it's deployed into the same namespace as your Fargate profile (default in our case).
+
+
+Would you like me to:
+
+    Build a complete Terraform module for ECR + ALB + CI/CD?
+
+    Provide the Helm install instructions for the ALB Controller?
+
+    Add automatic DNS (e.g., via Route53)?
+
+Let me know how far you want to take this.
+
+
+
+Absolutely, let's take it all the way! Here’s a full Terraform module that integrates:
+
+    EKS Cluster with Fargate
+
+    ECR repository
+
+    ALB Ingress Controller using IAM Roles for Service Accounts (IRSA)
+
+    Route 53 managed DNS
+
+    Optional: GitHub Actions CI/CD setup snippet
+
+🧑‍💼 1. Module Structure
+
+eks-fargate-full/
+├── main.tf
+├── variables.tf
+├── outputs.tf
+└── github-actions-template.yml
+
+
+📄 variables.tf
+
+
+variable "aws_region" {
+  type    = string
+  default = "us-west-2"
+}
+variable "cluster_name"  { type = string; default = "fargate-eks" }
+variable "dns_zone_id"   { type = string; description = "Route 53 hosted zone ID" }
+variable "app_domain"    { type = string; description = "e.g. app.example.com" }
+
+
+
+🧱 main.tf
+
+
+provider "aws" {
+  region = var.aws_region
+}
+
+data "aws_availability_zones" "azs" {}
+module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "5.1.0"
+  name    = var.cluster_name
+  cidr    = "10.0.0.0/16"
+  azs             = slice(data.aws_availability_zones.azs.names, 0, 2)
+  private_subnets = ["10.0.1.0/24","10.0.2.0/24"]
+  public_subnets  = ["10.0.3.0/24","10.0.4.0/24"]
+  enable_dns_hostnames = true
+}
+
+## EKS Role
+resource "aws_iam_role" "eks" {
+  name = "${var.cluster_name}-eks-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect = "Allow"
+      Principal = { Service = "eks.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+resource "aws_iam_role_policy_attachment" "eks_attach" {
+  for_each   = toset([
+    "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy",
+    "arn:aws:iam::aws:policy/AmazonEKSServicePolicy"
+  ])
+  role       = aws_iam_role.eks.name
+  policy_arn = each.key
+}
+
+## EKS Cluster
+resource "aws_eks_cluster" "cluster" {
+  name     = var.cluster_name
+  role_arn = aws_iam_role.eks.arn
+  vpc_config { subnet_ids = module.vpc.private_subnets }
+  depends_on = [aws_iam_role_policy_attachment.eks_attach]
+}
+
+## Fargate Pod Execution Role
+resource "aws_iam_role" "fargate_pod_execution" {
+  name = "${var.cluster_name}-fargate-exec-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect = "Allow"
+      Principal = { Service = "eks-fargate-pods.amazonaws.com" }
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+resource "aws_iam_role_policy_attachment" "exec_attach" {
+  role       = aws_iam_role.fargate_pod_execution.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSFargatePodExecutionRolePolicy"
+}
+resource "aws_eks_fargate_profile" "fargate" {
+  cluster_name           = aws_eks_cluster.cluster.name
+  fargate_profile_name   = "default"
+  pod_execution_role_arn = aws_iam_role.fargate_pod_execution.arn
+  subnet_ids             = module.vpc.private_subnets
+  selector { namespace = "default" }
+  depends_on = [aws_iam_role_policy_attachment.exec_attach]
+}
+
+## ECR Repo
+resource "aws_ecr_repository" "app" {
+  name = "${var.cluster_name}-app"
+}
+
+## ALB Ingress Controller IRSA — policy for ingress-controller
+data "aws_iam_policy_document" "alb_assume" {
+  statement {
+    effect = "Allow"
+    principals {
+      type        = "Service"
+      identifiers = ["eks.amazonaws.com"]
+    }
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    condition {
+      test     = "StringEquals"
+      values   = [aws_eks_cluster.cluster.identity[0].oidc.issuer]
+      variable = "${replace(regex("^https://", ""), aws_eks_cluster.cluster.identity[0].oidc.issuer, "")}:sub"
+    }
+  }
+}
+resource "aws_iam_role" "alb_ingress" {
+  name               = "${var.cluster_name}-alb-ingress-role"
+  assume_role_policy = data.aws_iam_policy_document.alb_assume.json
+}
+# Pre-made policy with necessary permissions (attach manually, or inline)
+resource "aws_iam_role_policy_attachment" "alb_attach" {
+  role       = aws_iam_role.alb_ingress.name
+  policy_arn = "arn:aws:iam::aws:policy/AWSLoadBalancerControllerIAMPolicy"
+}
+
+## Helm chart: AWS Load Balancer Controller
+resource "helm_release" "alb" {
+  name       = "aws-load-balancer-controller"
+  repository = "https://aws.github.io/eks-charts"
+  chart      = "aws-load-balancer-controller"
+  namespace  = "kube-system"
+  version    = "1.6.1"
+  set = [
+    "clusterName=${aws_eks_cluster.cluster.name}",
+    "region=${var.aws_region}",
+    "vpcId=${module.vpc.vpc_id}",
+    "serviceAccount.create=false",
+    "serviceAccount.name=aws-load-balancer-controller",
+    "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn=${aws_iam_role.alb_ingress.arn}"
+  ]
+  depends_on = [aws_iam_role_policy_attachment.alb_attach]
+}
+
+## DNS via Route 53
+resource "aws_route53_record" "app" {
+  zone_id = var.dns_zone_id
+  name    = var.app_domain
+  type    = "A"
+  alias {
+    name                   = helm_release.alb.status.load_balancer.ingress[0].hostname
+    zone_id                = helm_release.alb.status.load_balancer.ingress[0].zone_id
+    evaluate_target_health = true
+  }
+  depends_on = [helm_release.alb]
+}
+
+
+
+📤 outputs.tf
+
+
+output "cluster_name"     { value = aws_eks_cluster.cluster.name }
+output "cluster_endpoint" { value = aws_eks_cluster.cluster.endpoint }
+output "ecr_repository"   { value = aws_ecr_repository.app.repository_url }
+output "alb_hostname"     { value = helm_release.alb.status.load_balancer.ingress[0].hostname }
+output "app_dns"          { value = "${var.app_domain}" }
+
+
+
+📝 GitHub Actions Template
+
+Save as github-actions-template.yml in your project root:
+
+
+name: Deploy to EKS
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_IAM_DEPLOY_ROLE_ARN }}
+          role-duration-seconds: 900
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build & Push Docker image
+        run: |
+          docker build -t ${{ secrets.ECR_REPO }}:${{ github.sha }}
+          docker tag ${{ secrets.ECR_REPO }}:${{ github.sha }} ${{ secrets.ECR_REPO }}:latest
+          docker push ${{ secrets.ECR_REPO }}:latest
+
+      - name: Deploy to EKS via kubectl
+        run: |
+          aws eks update-kubeconfig --name ${{ secrets.EKS_CLUSTER_NAME }} --region ${{ secrets.AWS_REGION }}
+          kubectl set image deployment/my-app my-app=${{ secrets.ECR_REPO }}:latest
+
+
+
+✅ What’s Next?
+
+    Run terraform init && plan && apply
+
+    Provision AWS resources and fetch outputs
+
+    Create GitHub secrets: AWS_REGION, EKS_CLUSTER_NAME, ECR_REPO, AWS_IAM_DEPLOY_ROLE_ARN
+
+    Apply a Kubernetes Deployment + Service YAML under default namespace
+
+    Access your application at the custom domain you've set
+
+
+Would you like me to add Terraform modules for Blue/Green deployment, or show the full sample
+Kubernetes manifests for ALB ingress?
+
+
+
+Awesome! Let’s complete the setup with:
+
+======================================
+
+✅ 1. Blue/Green Deployment with Terraform and Kubernetes
+
+This setup lets you deploy two versions of your app (blue and green) and switch traffic using an ALB Ingress.
+
+
+📄 k8s/deployment-blue-green.yaml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-blue
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: my-app
+      version: blue
+  template:
+    metadata:
+      labels:
+        app: my-app
+        version: blue
+    spec:
+      containers:
+      - name: my-app
+        image: <your_ecr_repo>:blue
+        ports:
+        - containerPort: 80
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-green
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: my-app
+      version: green
+  template:
+    metadata:
+      labels:
+        app: my-app
+        version: green
+    spec:
+      containers:
+      - name: my-app
+        image: <your_ecr_repo>:green
+        ports:
+        - containerPort: 80
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-service
+spec:
+  selector:
+    app: my-app
+    version: green  # <--- Switch between "blue" or "green"
+  ports:
+    - port: 80
+      targetPort: 80
+
+
+
+You can switch traffic between the blue and green deployments by changing this one line in the Service selector:
+
+
+version: green → version: blue
+
+
+You can do this using Terraform’s kubernetes_service resource, but it’s more maintainable using kubectl 
+or Helm in CI/CD pipelines.
+
+✅ 2. ALB Ingress for Blue/Green
+📄 k8s/ingress.yaml
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: app-ingress
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/subnets: <comma-separated-subnet-ids>
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+    alb.ingress.kubernetes.io/group.name: "blue-green"
+    alb.ingress.kubernetes.io/load-balancer-name: "app-alb"
+spec:
+  ingressClassName: alb
+  rules:
+  - host: <your-app-domain>
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: app-service
+            port:
+              number: 80
+
+
+
+💡 Switch traffic by changing the version: label in the Service selector from blue to green — instant switch via Ingress.
+
+
+🚀 3. Automate Blue/Green with GitHub Actions
+📄 .github/workflows/deploy-blue-green.yml
+
+
+
+name: Blue-Green Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Deployment color (blue or green)"
+        required: true
+        default: "green"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_IAM_DEPLOY_ROLE_ARN }}
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name ${{ secrets.EKS_CLUSTER_NAME }}
+
+      - name: Deploy to selected color
+        run: |
+          kubectl set image deployment/app-${{ github.event.inputs.version }} my-app=${{ secrets.ECR_REPO }}:${{ github.sha }}
+          kubectl patch service app-service -p "{\"spec\": {\"selector\": {\"app\": \"my-app\", \"version\": \"${{ github.event.inputs.version }}\"}}}"
+
+
+
+
+You can trigger this manually from the GitHub Actions UI and select "blue" or "green" to redirect traffic.
+
+
+🧪 Final Notes
+
+    ✅ Blue/Green controlled by Service selector — safest zero-downtime rollout
+
+    🌐 Works seamlessly with ALB and Fargate
+
+    🔁 Reversible within seconds
+
+    🤖 GitHub Actions enables controlled rollout + rollback
+
+
+Would you like:
+
+    A ready-to-run sample GitHub repo?
+
+    Helm chart templates for this?
+
+    Monitoring setup (e.g., CloudWatch, Prometheus/Grafana)?
+
+Let me know how deep you want to go
+
+
+
+Fantastic! There are several strong next steps depending on what you'd like to focus on next. Which of the 
+following would you like to explore?
+
+🔧 What would you like next?
+
+    📂 Ready-to-run GitHub repo
+    A complete sample repository with Terraform, Kubernetes manifests, and GitHub Actions workflows, ready for cloning and customizing.
+
+    📦 Helm chart templates
+    Structured, reusable Helm charts for the blue/green deployments, with built-in Ingress and deployment switching.
+
+    📊 Monitoring & Observability
+
+        CloudWatch metrics and alarms for your ALB, EKS, and pods
+
+        Or full Prometheus + Grafana setup on Fargate with dashboards
+
+    🚨 Rollback & Canary Strategies
+
+      Advanced rollout patterns (canary, automated rollback, weighted traffic shifts) using tools like Flagger or AWS App Mesh.
+
+
+    🔐 Security / Hardening
+
+        Pod security policies
+
+        TLS via Cert-Manager
+
+        IAM permissions refinement
+
+Just let me know which option you'd like to dive into—or propose your own—and I’ll build it out for you!
+
+
+
