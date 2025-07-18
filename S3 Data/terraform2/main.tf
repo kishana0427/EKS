@@ -167,7 +167,7 @@ resource "aws_eks_node_group" "node_group" {
   }
 
   instance_types = ["t3.micro"]
-#  capacity_type  = "SPOT"        # Use Spot Instances to potentially bypass fleet request limits
+  capacity_type  = "SPOT"        # Use Spot Instances to potentially bypass fleet request limits
   ami_type       = "AL2023_x86_64_STANDARD"
 
   depends_on = [aws_iam_role_policy_attachment.eks_worker_node_policies]
