@@ -106,7 +106,7 @@ resource "aws_iam_role" "eks_cluster_role" {
 }
 
 resource "aws_iam_role_policy_attachment" "eks_cluster_attach" {
-  count = 3
+  count = 2
   role       = aws_iam_role.eks_cluster_role.name
   policy_arn = element([
     "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy",
