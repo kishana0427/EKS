@@ -39,10 +39,14 @@ resource "aws_subnet" "eks_subnet_private" {
 ==============================================================================================
 subnets with count
 
-You can create multiple subnets dynamically in Terraform using the count meta-argument. The count argument allows you to specify how many instances of a resource you want to create, and you can use it to create subnets across multiple availability zones based on a list or data source.
+You can create multiple subnets dynamically in Terraform using the count meta-argument. 
+The count argument allows you to specify how many instances of a resource you want to create, 
+and you can use it to create subnets across multiple availability zones based on a list or data source.
 Example: Create Subnets Using count
 
-If you want to create a set of subnets in multiple availability zones (AZs) dynamically, you can use the count argument with the aws_availability_zones data source and cidrsubnet function. This example creates a subnet in each available AZ in your VPC.
+If you want to create a set of subnets in multiple availability zones (AZs) dynamically, you can use 
+the count argument with the aws_availability_zones data source and cidrsubnet function. 
+This example creates a subnet in each available AZ in your VPC.
 
 Here’s how you can do it:
 Terraform Code to Create Subnets Dynamically Using count
