@@ -49,6 +49,120 @@ helm upgrade --install cluster-autoscaler autoscaler/cluster-autoscaler \
 
 Or use a YAML manifest if you don’t want Helm.
 
+
+f you prefer not to use Helm to install the Cluster Autoscaler on your EKS cluster, you can apply a YAML manifest directly. Below is a basic example of the manifest you can modify and apply using kubectl apply -f.
+✅ Cluster Autoscaler Deployment YAML for AWS EKS (without Helm)
+
+    Replace placeholders like my-eks-cluster, us-east-1, and the EKS node group tags accordingly.
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cluster-autoscaler
+  namespace: kube-system
+  labels:
+    k8s-addon: cluster-autoscaler.addons.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cluster-autoscaler
+rules:
+  - apiGroups: [""]
+    resources: ["events", "endpoints", "pods", "services", "nodes", "namespaces", "persistentvolumeclaims", "persistentvolumes"]
+    verbs: ["watch", "list", "get"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets", "statefulsets", "daemonsets", "deployments"]
+    verbs: ["watch", "list", "get"]
+  - apiGroups: ["autoscaling.k8s.io"]
+    resources: ["*"]
+    verbs: ["*"]
+  - apiGroups: ["extensions"]
+    resources: ["replicasets", "daemonsets"]
+    verbs: ["watch", "list", "get"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["watch", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cluster-autoscaler
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-autoscaler
+subjects:
+  - kind: ServiceAccount
+    name: cluster-autoscaler
+    namespace: kube-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cluster-autoscaler
+  namespace: kube-system
+  labels:
+    app: cluster-autoscaler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cluster-autoscaler
+  template:
+    metadata:
+      labels:
+        app: cluster-autoscaler
+      annotations:
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
+    spec:
+      serviceAccountName: cluster-autoscaler
+      containers:
+        - image: registry.k8s.io/autoscaling/cluster-autoscaler:v1.29.0
+          name: cluster-autoscaler
+          resources:
+            limits:
+              cpu: 100m
+              memory: 600Mi
+            requests:
+              cpu: 100m
+              memory: 600Mi
+          command:
+            - ./cluster-autoscaler
+            - --cloud-provider=aws
+            - --cluster-name=my-eks-cluster
+            - --scan-interval=10s
+            - --balance-similar-node-groups
+            - --skip-nodes-with-local-storage=false
+            - --skip-nodes-with-system-pods=false
+            - --expander=least-waste
+            - --aws-use-static-instance-list=false
+            - --nodes=1:10:your-node-group-name
+          volumeMounts:
+            - name: ssl-certs
+              mountPath: /etc/ssl/certs/ca-certificates.crt
+              readOnly: true
+          env:
+            - name: AWS_REGION
+              value: us-east-1
+      volumes:
+        - name: ssl-certs
+          hostPath:
+            path: /etc/ssl/certs/ca-bundle.crt
+
+📌 Notes:
+
+    Replace my-eks-cluster with your actual EKS cluster name.
+
+    Replace your-node-group-name with the EKS managed node group name tagged with k8s.io/cluster-autoscaler/enabled = true and k8s.io/cluster-autoscaler/<cluster-name> = owned.
+
+    Update the image tag (v1.29.0) as needed to match your Kubernetes version.
+
+    Make sure your IAM Role (IRSA or node role) has permissions: autoscaling:DescribeAutoScalingGroups, autoscaling:SetDesiredCapacity, etc.
+
+Let me know if you need the IRSA setup (IAM role and trust policy) as well.
+
+
 📌 IAM for Cluster Autoscaler (IRSA Recommended)
 
 Recommended: use IAM Roles for Service Accounts (IRSA) for autoscaler pods.
