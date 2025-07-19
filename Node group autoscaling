@@ -50,7 +50,7 @@ helm upgrade --install cluster-autoscaler autoscaler/cluster-autoscaler \
 Or use a YAML manifest if you don’t want Helm.
 
 
-f you prefer not to use Helm to install the Cluster Autoscaler on your EKS cluster, you can apply a YAML manifest directly. Below is a basic example of the manifest you can modify and apply using kubectl apply -f.
+If you prefer not to use Helm to install the Cluster Autoscaler on your EKS cluster, you can apply a YAML manifest directly. Below is a basic example of the manifest you can modify and apply using kubectl apply -f.
 ✅ Cluster Autoscaler Deployment YAML for AWS EKS (without Helm)
 
     Replace placeholders like my-eks-cluster, us-east-1, and the EKS node group tags accordingly.
