@@ -94,36 +94,65 @@ resource "aws_route_table_association" "private_assoc" {
 # 2. Security Groups
 ########################
 
+
+# EKS Cluster Security Group
 resource "aws_security_group" "eks_cluster_sg" {
   name        = "eks-cluster-sg"
-  description = "EKS cluster SG"
+  description = "Security group for EKS Cluster"
   vpc_id      = aws_vpc.eks_vpc.id
+
+  ingress {
+    description     = "Allow worker nodes to communicate with cluster API"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    security_groups = [aws_security_group.eks_node_sg.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "eks-cluster-sg"
+  }
 }
 
+# EKS Node Security Group
 resource "aws_security_group" "eks_node_sg" {
   name        = "eks-node-sg"
-  description = "EKS node SG"
+  description = "Security group for EKS Worker Nodes"
   vpc_id      = aws_vpc.eks_vpc.id
-}
 
-# Allow nodes to talk to cluster
-resource "aws_security_group_rule" "node_to_cluster" {
-  type                     = "ingress"
-  from_port                = 443
-  to_port                  = 443
-  protocol                 = "tcp"
-  security_group_id        = aws_security_group.eks_cluster_sg.id
-  source_security_group_id = aws_security_group.eks_node_sg.id
-}
+  ingress {
+    description = "Node to node communication"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    self        = true
+  }
 
-# Allow cluster to talk to nodes
-resource "aws_security_group_rule" "cluster_to_node" {
-  type                     = "ingress"
-  from_port                = 1025
-  to_port                  = 65535
-  protocol                 = "tcp"
-  security_group_id        = aws_security_group.eks_node_sg.id
-  source_security_group_id = aws_security_group.eks_cluster_sg.id
+  ingress {
+    description     = "Allow nodes to talk to EKS Cluster"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    security_groups = [aws_security_group.eks_cluster_sg.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "eks-node-sg"
+  }
 }
 
 
