@@ -1,8 +1,0 @@
-apply:
-	docker run --rm -v $(PWD)/terraform:/workspace -w /workspace terraform apply -auto-approve
-
-plan:
-	docker run --rm -v $(PWD)/terraform:/workspace -w /workspace terraform plan
-
-destroy:
-	docker run --rm -v $(PWD)/terraform:/workspace -w /workspace terraform destroy -auto-approve
