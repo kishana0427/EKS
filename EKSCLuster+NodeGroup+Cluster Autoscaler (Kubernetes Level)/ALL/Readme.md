@@ -1,0 +1,395 @@
+Full EKS cluster with VPC, NAT, public/private subnets
+======================================================
+======================================================
+
+Creating a full Amazon EKS (Elastic Kubernetes Service) cluster setup with a custom VPC, NAT Gateway, public/private subnets, and appropriate networking and security configurations is a common architecture for running Kubernetes workloads in AWS. This setup allows you to isolate workloads, expose services properly, and maintain security.
+
+Below is a Terraform-based setup for creating a complete EKS environment with:
+
+    Custom VPC
+
+    Public and private subnets across 2 AZs
+
+    Internet Gateway and NAT Gateway
+
+    Route tables for public/private subnets
+
+    EKS cluster with node group(s)
+
+    🧱 Prerequisites
+
+    Terraform installed (>= 1.0)
+
+    AWS CLI configured (aws configure)
+
+    IAM user/role with permissions to create VPC, EC2, EKS, etc.
+
+
+    📁 File Structure
+
+eks-cluster/
+├── main.tf
+├── variables.tf
+├── outputs.tf
+└── provider.tf
+
+🧾 provider.tf
+
+provider "aws" {
+  region = var.region
+}
+
+🧾 variables.tf
+
+variable "region" {
+  default = "us-east-1"
+}
+
+variable "vpc_cidr" {
+  default = "10.0.0.0/16"
+}
+
+variable "public_subnet_cidrs" {
+  default = ["10.0.1.0/24", "10.0.2.0/24"]
+}
+
+variable "private_subnet_cidrs" {
+  default = ["10.0.3.0/24", "10.0.4.0/24"]
+}
+
+variable "cluster_name" {
+  default = "my-eks-cluster"
+}
+
+🧾 main.tf
+
+# VPC
+resource "aws_vpc" "main" {
+  cidr_block = var.vpc_cidr
+  enable_dns_support = true
+  enable_dns_hostnames = true
+  tags = {
+    Name = "${var.cluster_name}-vpc"
+  }
+}
+
+# Internet Gateway
+resource "aws_internet_gateway" "gw" {
+  vpc_id = aws_vpc.main.id
+}
+
+# Public Subnets
+resource "aws_subnet" "public" {
+  count             = 2
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = var.public_subnet_cidrs[count.index]
+  availability_zone = data.aws_availability_zones.available.names[count.index]
+  map_public_ip_on_launch = true
+  tags = {
+    Name = "public-subnet-${count.index + 1}"
+  }
+}
+
+# Private Subnets
+resource "aws_subnet" "private" {
+  count             = 2
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = var.private_subnet_cidrs[count.index]
+  availability_zone = data.aws_availability_zones.available.names[count.index]
+  map_public_ip_on_launch = false
+  tags = {
+    Name = "private-subnet-${count.index + 1}"
+  }
+}
+
+# Elastic IP for NAT Gateway
+resource "aws_eip" "nat" {
+  vpc = true
+}
+
+# NAT Gateway
+resource "aws_nat_gateway" "nat" {
+  allocation_id = aws_eip.nat.id
+  subnet_id     = aws_subnet.public[0].id
+}
+
+# Route tables for public
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.gw.id
+  }
+}
+
+resource "aws_route_table_association" "public" {
+  count          = 2
+  subnet_id      = aws_subnet.public[count.index].id
+  route_table_id = aws_route_table.public.id
+}
+
+# Route tables for private
+resource "aws_route_table" "private" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.nat.id
+  }
+}
+
+resource "aws_route_table_association" "private" {
+  count          = 2
+  subnet_id      = aws_subnet.private[count.index].id
+  route_table_id = aws_route_table.private.id
+}
+
+# IAM Role for EKS
+resource "aws_iam_role" "eks_role" {
+  name = "${var.cluster_name}-eks-role"
+
+  assume_role_policy = data.aws_iam_policy_document.eks_assume_role.json
+}
+
+data "aws_iam_policy_document" "eks_assume_role" {
+  statement {
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["eks.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "eks_cluster_AmazonEKSClusterPolicy" {
+  role       = aws_iam_role.eks_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+}
+
+resource "aws_iam_role_policy_attachment" "eks_cluster_AmazonEKSServicePolicy" {
+  role       = aws_iam_role.eks_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSServicePolicy"
+}
+
+# EKS Cluster
+resource "aws_eks_cluster" "main" {
+  name     = var.cluster_name
+  role_arn = aws_iam_role.eks_role.arn
+
+  vpc_config {
+    subnet_ids = aws_subnet.private[*].id
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.eks_cluster_AmazonEKSClusterPolicy,
+    aws_iam_role_policy_attachment.eks_cluster_AmazonEKSServicePolicy
+  ]
+}
+
+# Node group role
+resource "aws_iam_role" "node_group_role" {
+  name = "${var.cluster_name}-node-group-role"
+
+  assume_role_policy = data.aws_iam_policy_document.eks_nodes_assume_role.json
+}
+
+data "aws_iam_policy_document" "eks_nodes_assume_role" {
+  statement {
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["ec2.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "worker_node_policy" {
+  role       = aws_iam_role.node_group_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+}
+
+resource "aws_iam_role_policy_attachment" "cni_policy" {
+  role       = aws_iam_role.node_group_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+}
+
+resource "aws_iam_role_policy_attachment" "registry_policy" {
+  role       = aws_iam_role.node_group_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+}
+
+# Node group
+resource "aws_eks_node_group" "node_group" {
+  cluster_name    = aws_eks_cluster.main.name
+  node_group_name = "${var.cluster_name}-ng"
+  node_role_arn   = aws_iam_role.node_group_role.arn
+  subnet_ids      = aws_subnet.private[*].id
+
+  scaling_config {
+    desired_size = 2
+    max_size     = 3
+    min_size     = 1
+  }
+
+  instance_types = ["t3.medium"]
+}
+
+🧾 outputs.tf
+
+output "eks_cluster_name" {
+  value = aws_eks_cluster.main.name
+}
+
+output "vpc_id" {
+  value = aws_vpc.main.id
+}
+
+🚀 Deploy Instructions
+
+terraform init
+terraform apply -auto-approve
+
+✅ Next Steps
+
+    Use aws eks update-kubeconfig --name my-eks-cluster to connect kubectl.
+
+    Deploy workloads using Helm or kubectl.
+
+    Consider adding an ALB Ingress Controller, EBS CSI Driver, or IRSA setup.
+
+
+
+Lets this structured into a GitHub repo or Dockerized for development environments
+==================================================================================
+==================================================================================
+
+Here's how to structure this EKS setup into a clean, production-ready GitHub repository, with optional Dockerized development for Terraform and AWS CLI tooling.
+
+
+📁 GitHub Repository Structure
+
+eks-cluster-terraform/
+├── .devcontainer/ (optional VSCode support)
+├── .github/
+│   └── workflows/
+│       └── terraform.yml   # CI/CD via GitHub Actions
+├── modules/                # (optional for reusable Terraform modules)
+├── terraform/
+│   ├── main.tf
+│   ├── variables.tf
+│   ├── outputs.tf
+│   └── provider.tf
+├── .gitignore
+├── Dockerfile
+├── Makefile
+├── README.md
+└── terraform.tfvars        # Your input variables
+
+🐳 Dockerfile (Dev Environment)
+
+FROM hashicorp/terraform:1.7.5
+
+# Install AWS CLI v2
+RUN apk add --no-cache curl unzip python3 py3-pip && \
+    pip3 install awscli && \
+    aws --version
+
+WORKDIR /workspace
+
+📄 .gitignore
+
+*.tfstate
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+*.log
+.env
+
+🧪 GitHub Actions: .github/workflows/terraform.yml
+
+name: Terraform Apply
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+
+    - name: Terraform Init
+      run: terraform -chdir=terraform init
+
+    - name: Terraform Validate
+      run: terraform -chdir=terraform validate
+
+    - name: Terraform Plan
+      run: terraform -chdir=terraform plan
+
+    - name: Terraform Apply
+      if: github.ref == 'refs/heads/main'
+      run: terraform -chdir=terraform apply -auto-approve
+
+🧰 Makefile (Optional)
+
+init:
+	docker run --rm -v $(PWD)/terraform:/workspace -w /workspace terraform apply -auto-approve
+
+plan:
+	docker run --rm -v $(PWD)/terraform:/workspace -w /workspace terraform plan
+
+destroy:
+	docker run --rm -v $(PWD)/terraform:/workspace -w /workspace terraform destroy -auto-approve
+
+
+📄 README.md
+
+# EKS Cluster on AWS with Terraform
+
+This repository provisions an Amazon EKS cluster with a custom VPC, public/private subnets, and secure node groups.
+
+## 🧱 Components
+
+- VPC with public/private subnets
+- NAT Gateway + IGW
+- EKS control plane and managed node groups
+- IAM roles for EKS and worker nodes
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+- Terraform >= 1.0
+- AWS CLI
+- Docker (for dev container, optional)
+
+### Steps
+
+```bash
+cd terraform
+terraform init
+terraform apply -auto-approve
+
+
+Configure kubectl
+
+aws eks update-kubeconfig --name my-eks-cluster --region us-east-1
+
+
+🐳 Using Docker
+
+make init
+
+🧹 Clean Up
+
+terraform destroy -auto-approve

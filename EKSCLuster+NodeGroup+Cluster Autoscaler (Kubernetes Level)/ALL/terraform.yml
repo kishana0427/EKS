@@ -1,0 +1,31 @@
+### 🧪 GitHub Actions: .github/workflows/terraform.yml
+
+name: Terraform Apply
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+
+    - name: Terraform Init
+      run: terraform -chdir=terraform init
+
+    - name: Terraform Validate
+      run: terraform -chdir=terraform validate
+
+    - name: Terraform Plan
+      run: terraform -chdir=terraform plan
+
+    - name: Terraform Apply
+      if: github.ref == 'refs/heads/main'
+      run: terraform -chdir=terraform apply -auto-approve
