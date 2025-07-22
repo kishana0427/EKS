@@ -95,64 +95,41 @@ resource "aws_route_table_association" "private_assoc" {
 ########################
 
 # EKS Cluster Security Group
+
 resource "aws_security_group" "eks_cluster_sg" {
   name        = "eks-cluster-sg"
-  description = "Security group for EKS Cluster"
+  description = "EKS cluster SG"
   vpc_id      = aws_vpc.eks_vpc.id
-
-  ingress {
-    description     = "Allow worker nodes to communicate with cluster API"
-    from_port       = 443
-    to_port         = 443
-    protocol        = "tcp"
-    security_groups = [aws_security_group.eks_node_sg.id]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = {
-    Name = "eks-cluster-sg"
-  }
 }
 
 # EKS Node Security Group
+
 resource "aws_security_group" "eks_node_sg" {
   name        = "eks-node-sg"
-  description = "Security group for EKS Worker Nodes"
+  description = "EKS node SG"
   vpc_id      = aws_vpc.eks_vpc.id
-
-  ingress {
-    description = "Node to node communication"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    self        = true
-  }
-
-  ingress {
-    description     = "Allow nodes to talk to EKS Cluster"
-    from_port       = 443
-    to_port         = 443
-    protocol        = "tcp"
-    security_groups = [aws_security_group.eks_cluster_sg.id]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = {
-    Name = "eks-node-sg"
-  }
 }
+
+# Allow nodes to talk to cluster
+resource "aws_security_group_rule" "node_to_cluster" {
+  type                     = "ingress"
+  from_port                = 443
+  to_port                  = 443
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.eks_cluster_sg.id
+  source_security_group_id = aws_security_group.eks_node_sg.id
+}
+
+# Allow cluster to talk to nodes
+resource "aws_security_group_rule" "cluster_to_node" {
+  type                     = "ingress"
+  from_port                = 1025
+  to_port                  = 65535
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.eks_node_sg.id
+  source_security_group_id = aws_security_group.eks_cluster_sg.id
+}
+
 
 ########################
 # 3. IAM Roles & Policies
@@ -243,7 +220,7 @@ resource "aws_eks_node_group" "node_group" {
   ami_type       = "AL2023_x86_64_STANDARD"
 
   remote_access {
-    ec2_ssh_key               = "your-ssh-key-name" # Optional: Replace with actual key pair name
+    ec2_ssh_key               = "kavitha-home-2025" # Optional: Replace with actual key pair name
     source_security_group_ids = [aws_security_group.eks_node_sg.id]
   }
 

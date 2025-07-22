@@ -225,4 +225,24 @@ resource "aws_eks_node_group" "node_group" {
   }
 
   depends_on = [aws_iam_role_policy_attachment.eks_worker_node_policies]
+  
 }
+
+########################
+# 5. Cluster Autoscaler (Kubernetes Level)
+########################
+
+helm repo add autoscaler https://kubernetes.github.io/autoscaler
+helm repo update
+
+helm upgrade --install cluster-autoscaler autoscaler/cluster-autoscaler \
+  --namespace kube-system \
+  --set cloudProvider=aws \
+  --set autoDiscovery.clusterName=my-eks-cluster \
+  --set awsRegion=ap-south-1 \
+  --set rbac.create=true \
+  --set extraArgs.balance-similar-node-groups=true \
+  --set extraArgs.expander=least-waste \
+  --set extraArgs.skip-nodes-with-local-storage=false \
+  --set extraArgs.skip-nodes-with-system-pods=false
+

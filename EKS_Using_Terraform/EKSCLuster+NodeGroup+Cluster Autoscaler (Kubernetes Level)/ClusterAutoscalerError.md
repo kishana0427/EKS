@@ -225,4 +225,217 @@ resource "aws_eks_node_group" "node_group" {
   }
 
   depends_on = [aws_iam_role_policy_attachment.eks_worker_node_policies]
+  
 }
+
+########################
+# 5. Cluster Autoscaler (Kubernetes Level)
+########################
+
+helm repo add autoscaler https://kubernetes.github.io/autoscaler
+helm repo update
+
+helm upgrade --install cluster-autoscaler autoscaler/cluster-autoscaler \
+  --namespace kube-system \
+  --set cloudProvider=aws \
+  --set autoDiscovery.clusterName=my-eks-cluster \
+  --set awsRegion=ap-south-1 \
+  --set rbac.create=true \
+  --set extraArgs.balance-similar-node-groups=true \
+  --set extraArgs.expander=least-waste \
+  --set extraArgs.skip-nodes-with-local-storage=false \
+  --set extraArgs.skip-nodes-with-system-pods=false
+   terraform plan
+╷
+│ Error: Unsupported block type
+│
+│   on main.tf line 235:
+│  235: helm repo add autoscaler https://kubernetes.github.io/autoscaler
+│
+│ Blocks of type "helm" are not expected here.
+╵
+╷
+│ Error: Invalid block definition
+│
+│   on main.tf line 235:
+│  235: helm repo add autoscaler https://kubernetes.github.io/autoscaler
+│
+│ Either a quoted string block label or an opening brace ("{") is expected here.
+╵
+╷
+│ Error: Unsupported block type
+│
+│   on main.tf line 236:
+│  236: helm repo update
+│
+│ Blocks of type "helm" are not expected here.
+╵
+╷
+│ Error: Invalid block definition
+│
+│   on main.tf line 236:
+│  236: helm repo update
+│
+│ A block definition must have block content delimited by "{" and "}", starting on the same line as the block header.
+╵
+╷
+│ Error: Unsupported block type
+│
+│   on main.tf line 238:
+│  238: helm upgrade --install cluster-autoscaler autoscaler/cluster-autoscaler \
+│
+│ Blocks of type "helm" are not expected here.
+╵
+╷
+│ Error: Invalid character
+│
+│   on main.tf line 238:
+│  238: helm upgrade --install cluster-autoscaler autoscaler/cluster-autoscaler \
+│
+│ This character is not used within the language.
+╵
+╷
+│ Error: Invalid character
+│
+│   on main.tf line 239:
+│  239:   --namespace kube-system \
+│
+│ This character is not used within the language.
+╵
+╷
+│ Error: Invalid character
+│
+│   on main.tf line 240:
+│  240:   --set cloudProvider=aws \
+│
+│ This character is not used within the language.
+╵
+╷
+│ Error: Invalid character
+│
+│   on main.tf line 241:
+│  241:   --set autoDiscovery.clusterName=my-eks-cluster \
+│
+│ This character is not used within the language.
+╵
+╷
+│ Error: Invalid character
+│
+│   on main.tf line 242:
+│  242:   --set awsRegion=ap-south-1 \
+│
+│ This character is not used within the language.
+╵
+╷
+│ Error: Invalid character
+│
+│   on main.tf line 243:
+│  243:   --set rbac.create=true \
+│
+│ This character is not used within the language.
+╵
+╷
+│ Error: Invalid character
+│
+│   on main.tf line 244:
+│  244:   --set extraArgs.balance-similar-node-groups=true \
+│
+│ This character is not used within the language.
+╵
+╷
+│ Error: Invalid character
+│
+│   on main.tf line 245:
+│  245:   --set extraArgs.expander=least-waste \
+│
+│ This character is not used within the language.
+╵
+╷
+│ Error: Invalid character
+│
+│   on main.tf line 246:
+│  246:   --set extraArgs.skip-nodes-with-local-storage=false \
+│
+│ This character is not used within the language.
+
+
+
+You're getting all those Terraform errors because you're trying to run Helm CLI commands (helm repo add, helm upgrade, etc.) inside a Terraform configuration file (main.tf). Terraform does not understand or accept CLI commands written like shell script in .tf files — it expects resource definitions written in Terraform syntax.
+✅ Correct Approach:
+
+If you want to install the Cluster Autoscaler using Helm in Terraform, you need to use the helm_release resource from the Terraform Helm provider.
+🛠️ How to fix it (Terraform-native Helm install):
+
+First, make sure you declare the Helm provider in your configuration:
+
+provider "helm" {
+  kubernetes {
+    config_path = "~/.kube/config" # or use a data source if provisioning kubeconfig
+  }
+}
+
+
+Then, add this Terraform block to install the Cluster Autoscaler via Helm:
+
+
+resource "helm_release" "cluster_autoscaler" {
+  name       = "cluster-autoscaler"
+  repository = "https://kubernetes.github.io/autoscaler"
+  chart      = "cluster-autoscaler"
+  namespace  = "kube-system"
+  version    = "9.29.0" # Replace with latest or needed version
+
+  set {
+    name  = "cloudProvider"
+    value = "aws"
+  }
+
+  set {
+    name  = "autoDiscovery.clusterName"
+    value = "my-eks-cluster"
+  }
+
+  set {
+    name  = "awsRegion"
+    value = "ap-south-1"
+  }
+
+  set {
+    name  = "rbac.create"
+    value = "true"
+  }
+
+  set {
+    name  = "extraArgs.balance-similar-node-groups"
+    value = "true"
+  }
+
+  set {
+    name  = "extraArgs.expander"
+    value = "least-waste"
+  }
+
+  set {
+    name  = "extraArgs.skip-nodes-with-local-storage"
+    value = "false"
+  }
+
+  set {
+    name  = "extraArgs.skip-nodes-with-system-pods"
+    value = "false"
+  }
+}
+
+
+✅ Summary
+
+    ❌ Don’t write CLI commands like helm install ... inside main.tf
+
+    ✅ Use the helm_release resource to install Helm charts
+
+    ✅ Add the Helm provider
+
+    ✅ Ensure your kubeconfig is available to the Helm provider
+
+
+    Let me know if you want to configure the provider dynamically (e.g., using Terraform output from your EKS cluster for the kubeconfig).
