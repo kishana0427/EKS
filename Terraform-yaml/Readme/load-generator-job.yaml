@@ -1,0 +1,19 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: load-generator
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: hey
+        image: williamyeh/hey
+        args:
+          - "-z"
+          - "30s"
+          - "-c"
+          - "10"
+          - "http://my-deploy.default.svc.cluster.local"
+

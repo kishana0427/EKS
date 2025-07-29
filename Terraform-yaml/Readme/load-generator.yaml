@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: load-generator
+spec:
+  restartPolicy: Never
+  containers:
+  - name: hey
+    image: quay.io/vegasbrianc/hey
+    command: ["hey"]
+    args:
+      - "-z"
+      - "1m"
+      - "-c"
+      - "20"
+      - "http://my-deploy.default.svc.cluster.local"
+
