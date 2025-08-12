@@ -200,3 +200,64 @@ spec:
     namespace: kube-system
   version: v1beta1
   versionPriority: 100
+
+
+  ###################  NOTE: #######################
+
+#  The Role named extension-apiserver-authentication-reader is 
+#  a built-in Role created automatically by Kubernetes in the kube-system namespace.
+
+# 📍 Location
+#  Namespace: kube-system
+
+#  Type: Role (not ClusterRole)
+
+#  Name: extension-apiserver-authentication-reader
+
+
+
+#  📄 Definition of the Role
+#  You can view it with this command:
+
+
+
+#  kubectl get role extension-apiserver-authentication-reader -n kube-system -o yaml
+
+
+
+
+#  You should see something like:
+
+#  apiVersion: rbac.authorization.k8s.io/v1
+#  kind: Role
+#  metadata:
+#    name: extension-apiserver-authentication-reader
+#    namespace: kube-system
+#  rules:
+#  - apiGroups: [""]
+#    resources: ["configmaps"]
+#    resourceNames: ["extension-apiserver-authentication"]
+#    verbs: ["get", "list"]
+
+
+#  🔍 Purpose
+#  This Role allows access to the following ConfigMap:
+
+
+#  ConfigMap: kube-system/extension-apiserver-authentication
+
+#  Which contains authentication-related settings needed by aggregated API servers, such as:
+
+#  Metrics Server
+
+#  Custom metrics API servers
+
+#  Any extension APIs registered with the Kubernetes API aggregation layer
+
+
+
+#🛡️ Why It Matters
+#Any component that is an aggregated API server (like Metrics Server or custom metrics adapters) 
+#needs to read that config map to know how to delegate authentication to the main API server.
+
+#This is why the metrics-server ServiceAccount needs a RoleBinding to this role.
